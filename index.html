@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hra Lodě | Námořní bitva</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚢</text></svg>">
+</head>
+<body>
+  <div class="bg-grid-pattern"></div>
+
+  <!-- Header -->
+  <header>
+    <div class="logo-group">
+      <div class="radar-logo"></div>
+      <div class="title-wrap">
+        <h1>NÁMOŘNÍ <span>BITVA</span></h1>
+        <p>Klasická strategická hra Lodě (10 × 10)</p>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <!-- Herní režim -->
+      <select id="modeSelect" class="btn" title="Zvolit herní režim">
+        <option value="vs_ai">🤖 Proti Počítači</option>
+        <option value="pvp_local">👥 2 Hráči (Na 1 zařízení)</option>
+        <option value="online">🌐 Online hra (Kód / Odkaz)</option>
+      </select>
+
+      <!-- Obtížnost AI -->
+      <select id="difficultySelect" class="btn" title="Obtížnost počítače">
+        <option value="smart">🎯 Taktická AI</option>
+        <option value="easy">🎲 Lehká AI</option>
+      </select>
+
+      <!-- Zvuk -->
+      <button id="soundToggleBtn" class="btn btn-icon" title="Zapnout/vypnout zvuk">🔊</button>
+
+      <!-- Pravidla -->
+      <button id="rulesBtn" class="btn" title="Zobrazit pravidla hry">📖 Pravidla</button>
+
+      <!-- Nová hra -->
+      <button id="newGameBtn" class="btn btn-danger" title="Restartovat a zahájit novou hru">🔄 Nová hra</button>
+    </div>
+  </header>
+
+  <!-- Hlavní herní plocha -->
+  <main>
+    <!-- Stavový pruh -->
+    <section class="status-bar">
+      <div class="status-indicator">
+        <span id="turnBadge" class="turn-badge">FÁZE ROZMÍSTĚNÍ</span>
+        <span id="onlineBadge" class="connection-pill" style="display: none;">
+          <span class="connection-dot"></span> <span id="onlinePeerName">Online</span>
+        </span>
+        <span id="statusMessage" class="status-message">Rozmístěte svou flotilu na hrací pole</span>
+      </div>
+      <div class="status-stats">
+        <span>Cíl: <strong id="targetCoord">--</strong></span>
+        <span>Výstřely: <strong id="totalShotsStat">0</strong></span>
+        <span>Zásahy: <strong id="totalHitsStat">0</strong></span>
+        <span>Přesnost: <strong id="accuracyStat">0%</strong></span>
+      </div>
+    </section>
+
+    <!-- 0. FÁZE: ONLINE LOBBY (PŘIPOJENÍ / KÓD / ODKAZ) -->
+    <section id="onlineLobbyView" class="game-view">
+      <div class="online-lobby-card">
+        <div class="lobby-header">
+          <h2>🌐 Online Námořní Bitva</h2>
+          <p>Hrajte se svým kamarádem přes internet přes kód místnosti nebo přímý odkaz!</p>
+        </div>
+
+        <div class="nickname-box">
+          <label for="playerNicknameInput">Tvoje jméno:</label>
+          <input type="text" id="playerNicknameInput" value="Kapitán" maxlength="15" placeholder="Zadejte přezdívku">
+        </div>
+
+        <div class="lobby-tabs">
+          <button id="tabCreateRoomBtn" class="lobby-tab-btn active">➕ Vytvořit novou místnost</button>
+          <button id="tabJoinRoomBtn" class="lobby-tab-btn">🚀 Připojit se k existující</button>
+        </div>
+
+        <!-- Tab 1: Vytvořit místnost -->
+        <div id="tabContentCreate" class="lobby-tab-content active">
+          <div class="room-code-display">
+            <span style="font-size: 0.85rem; color: var(--text-muted);">KÓD TVÉ MÍSTNOSTI:</span>
+            <div id="roomCodeVal" class="room-code-val">LODE-....</div>
+            <div class="room-actions-row">
+              <button id="copyCodeBtn" class="btn" title="Zkopírovat kód místnosti">📋 Kopírovat kód</button>
+              <button id="copyLinkBtn" class="btn btn-primary" title="Zkopírovat přímý odkaz pro kamaráda">🔗 Kopírovat odkaz pro soupeře</button>
+            </div>
+            <div id="directLinkPreview" class="direct-link-preview">Generuji odkaz...</div>
+          </div>
+
+          <div class="radar-wait-indicator">
+            <div class="pulse-radar">
+              <span>📡</span>
+            </div>
+            <div id="waitOpponentText" class="radar-wait-text">Čekám na připojení soupeře...</div>
+            <p style="font-size: 0.8rem; color: var(--text-muted); text-align: center;">
+              Pošli kód nebo odkaz druhému hráči. Jakmile odkaz otevře, hra se ihned propojí!
+            </p>
+          </div>
+        </div>
+
+        <!-- Tab 2: Připojit se k místnosti -->
+        <div id="tabContentJoin" class="lobby-tab-content">
+          <div class="join-room-box">
+            <p style="font-size: 0.9rem; color: var(--text-muted);">
+              Zadejte kód místnosti, který jste obdrželi od protihráče:
+            </p>
+            <div class="room-input-row">
+              <input type="text" id="joinRoomCodeInput" class="room-code-input" placeholder="LODE-1234" maxlength="15">
+              <button id="joinRoomSubmitBtn" class="btn btn-primary">Připojit se</button>
+            </div>
+            <div id="joinErrorMsg" style="color: var(--danger); font-size: 0.85rem; display: none;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 1. FÁZE: ROZMÍSTĚNÍ LODÍ (SETUP) -->
+    <section id="setupView" class="game-view active">
+      <div class="setup-container">
+        <!-- Plocha pro rozmístění -->
+        <div class="setup-panel">
+          <div class="board-header">
+            <span class="board-title">🗺️ <span id="setupPlayerName">Hráč 1</span>: Rozmístění flotily</span>
+            <span class="board-subtitle">10 × 10</span>
+          </div>
+
+          <!-- Mřížka -->
+          <div class="grid-wrapper">
+            <div class="grid-cols-header" id="setupColsHeader"></div>
+            <div class="grid-row-wrap">
+              <div class="grid-rows-header" id="setupRowsHeader"></div>
+              <div id="setupGrid" class="grid-board"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dok s loděmi a ovládací prvky -->
+        <div class="setup-controls">
+          <h2 class="setup-title">Dostupné lodě</h2>
+          <div id="dockShips" class="dock-ships">
+            <!-- Dynamicky generováno z FLEET_CONFIG -->
+          </div>
+
+          <div class="setup-actions-box">
+            <div class="setup-orientation-toggle">
+              <span>Orientace:</span>
+              <button id="rotateShipBtn" class="btn" title="Otočit loď (Klávesa R nebo Mezerník)">
+                <span id="orientationIcon">↔</span> <strong id="orientationText">Vodorovně</strong>
+              </button>
+            </div>
+
+            <div style="display: flex; gap: 8px;">
+              <button id="randomizeBtn" class="btn" style="flex: 1;" title="Rozmístit lodě náhodně">🎲 Náhodně</button>
+              <button id="clearBoardBtn" class="btn btn-danger" style="flex: 1;" title="Smazat lodě z pole">🗑️ Vymazat</button>
+            </div>
+
+            <button id="startGameBtn" class="btn btn-primary" style="padding: 12px; font-size: 1rem;" disabled>
+              ⚔️ Potvrdit flotilu do bitvy!
+            </button>
+          </div>
+
+          <div class="setup-hint">
+            💡 <strong>Tipy pro rozmístění:</strong><br>
+            • Klikněte na loď v seznamu a pak na pole, kam ji chcete umístit.<br>
+            • Lodě můžete otočit klávesou <strong>R</strong> nebo <strong>Mezerník</strong>.<br>
+            • Podle pravidel se lodě <strong>nesmí dotýkat ani rohy</strong>.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. FÁZE: NÁMOŘNÍ BITVA (BATTLE) -->
+    <section id="battleView" class="game-view">
+      <div class="battle-container">
+        <!-- 1. Vlastní flotila -->
+        <div class="board-card" id="friendlyCard">
+          <div class="board-header">
+            <span class="board-title">🛡️ <span id="friendlyName">Moje flotila</span></span>
+            <span class="board-subtitle">Obrana</span>
+          </div>
+
+          <div class="grid-wrapper">
+            <div class="grid-cols-header" id="friendlyColsHeader"></div>
+            <div class="grid-row-wrap">
+              <div class="grid-rows-header" id="friendlyRowsHeader"></div>
+              <div id="friendlyGrid" class="grid-board"></div>
+            </div>
+          </div>
+
+          <!-- Stav lodí hráče -->
+          <div id="friendlyFleetTracker" class="fleet-tracker"></div>
+        </div>
+
+        <!-- 2. Radar soupeře (Útok) -->
+        <div class="board-card active-target" id="opponentCard">
+          <div class="board-header">
+            <span class="board-title">🎯 <span id="opponentName">Radar nepřítele</span></span>
+            <span class="board-subtitle">Zóna střelby</span>
+          </div>
+
+          <div class="grid-wrapper">
+            <div class="grid-cols-header" id="opponentColsHeader"></div>
+            <div class="grid-row-wrap">
+              <div class="grid-rows-header" id="opponentRowsHeader"></div>
+              <div id="opponentGrid" class="grid-board radar-board"></div>
+            </div>
+          </div>
+
+          <!-- Stav lodí soupeře -->
+          <div id="opponentFleetTracker" class="fleet-tracker"></div>
+        </div>
+
+        <!-- Boční panel se záznamem bitvy -->
+        <div class="battle-sidebar">
+          <div class="log-panel">
+            <div class="log-header">
+              <span>📜 Bojový deník</span>
+              <span id="logTurnCount" style="font-size: 0.75rem; color: var(--text-muted);">Tah 1</span>
+            </div>
+            <div id="logEntries" class="log-entries">
+              <!-- Záznamy střelby -->
+            </div>
+          </div>
+
+          <!-- Rychlé online hlášení / reakce -->
+          <div class="quick-chat-bar" id="quickChatBar" style="display: none;">
+            <button class="chat-reaction-btn" data-msg="👋 Ahoj!">👋 Ahoj!</button>
+            <button class="chat-reaction-btn" data-msg="🎯 Pěkná trefa!">🎯 Trefa!</button>
+            <button class="chat-reaction-btn" data-msg="🌊 Jenom voda!">🌊 Voda!</button>
+            <button class="chat-reaction-btn" data-msg="😈 Mám tě!">😈 Mám tě!</button>
+            <button class="chat-reaction-btn" data-msg="🫡 Dobrá hra (GG)!">🫡 GG!</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL: PRAVIDLA HRY -->
+  <div id="rulesModal" class="modal-overlay">
+    <div class="modal-card">
+      <h2 class="modal-title">📖 Pravidla Námořní bitvy</h2>
+      <div class="modal-body">
+        <p><strong>Cíl hry:</strong> Najít a potopit všechny lodě protivníka dřív, než on potopí ty vaše.</p>
+        
+        <p><strong>Hrací pole:</strong> Každý hráč disponuje mřížkou o rozměrech <strong>10 × 10 polí</strong> (sloupce A–J, řádky 1–10).</p>
+
+        <p><strong>Rozestavění flotily (10 lodí celkem):</strong></p>
+        <ul class="rules-list">
+          <li>1× <strong>Bitevní loď</strong> (4 pole)</li>
+          <li>2× <strong>Křižník</strong> (3 pole)</li>
+          <li>3× <strong>Torpédoborec</strong> (2 pole)</li>
+          <li>4× <strong>Ponorka / Člun</strong> (1 pole)</li>
+        </ul>
+
+        <p><strong>Pravidlo o dotyku:</strong> Lodě mohou ležet vodorovně nebo svisle a <strong>nesmí se vzájemně dotýkat ani rohy (diagonálně)</strong>. Mezi všemi loděmi musí být alespoň jedno políčko vody.</p>
+
+        <p><strong>Průběh střelby a tahů:</strong></p>
+        <ul class="rules-list">
+          <li>Hráči se střídají v hlášení souřadnic (např. <em>B4</em>).</li>
+          <li>Pokud je na poli prázdno: hlášena <strong>voda (vedle)</strong> a na tahu je soupeř.</li>
+          <li>Pokud je na poli loď: hlášen <strong>zásah</strong>. <em>Po úspěšném zásahu má střelec právo na další střelu!</em></li>
+          <li>Jakmile jsou zasažena všechna pole lodi, loď je <strong>potopena</strong> a okolní pole se automaticky označí jako voda (žádná další loď se tam nemůže nacházet).</li>
+        </ul>
+
+        <p><strong>Vítězství:</strong> Vyhrává hráč, který jako první potopí celou flotilu soupeře.</p>
+      </div>
+      <div class="modal-actions">
+        <button id="closeRulesBtn" class="btn btn-primary">Rozumím, jdeme na to!</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: PŘEDÁNÍ ZAŘÍZENÍ (2 HRÁČI PASS & PLAY) -->
+  <div id="passDeviceModal" class="modal-overlay">
+    <div class="modal-card curtain-modal">
+      <div class="curtain-icon">🔒</div>
+      <h2 id="curtainTitle" class="modal-title">Předej zařízení dalšímu hráči!</h2>
+      <p id="curtainDesc" style="color: var(--text-muted); font-size: 0.95rem;">
+        Předchozí tah skončil. Předejte zařízení Hráči 2 a nechte obrazovku skrytou.
+      </p>
+      <div class="modal-actions" style="justify-content: center; width: 100%; margin-top: 14px;">
+        <button id="curtainConfirmBtn" class="btn btn-primary" style="padding: 12px 24px; font-size: 1rem;">
+          👁️ Jsem připraven, odkrýt pole
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: KONEC HRY (GAME OVER) -->
+  <div id="gameOverModal" class="modal-overlay">
+    <div class="modal-card winner-banner">
+      <div class="winner-trophy" id="winnerTrophy">🏆</div>
+      <h2 id="winnerTitle" class="modal-title" style="font-size: 1.6rem; color: var(--primary);">VÍTĚZSTVÍ!</h2>
+      <p id="winnerSubtitle" style="color: var(--text-muted); font-size: 1rem;">Celá nepřátelská flotila byla potopena na dno oceánu!</p>
+
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div id="statTotalShots" class="stat-val">0</div>
+          <div class="stat-lbl">Celkem výstřelů</div>
+        </div>
+        <div class="stat-box">
+          <div id="statTotalHits" class="stat-val">0</div>
+          <div class="stat-lbl">Úspěšné zásahy</div>
+        </div>
+        <div class="stat-box">
+          <div id="statAccuracy" class="stat-val">0%</div>
+          <div class="stat-lbl">Přesnost střelby</div>
+        </div>
+        <div class="stat-box">
+          <div id="statDuration" class="stat-val">0:00</div>
+          <div class="stat-lbl">Délka bitvy</div>
+        </div>
+      </div>
+
+      <div class="modal-actions" style="justify-content: center; width: 100%;">
+        <button id="restartGameBtn" class="btn btn-primary" style="padding: 12px 30px; font-size: 1.05rem;">
+          🔄 Hrát novou bitvu
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notifikace -->
+  <div id="toastNotice" class="toast-notice">📋 Odkaz byl zkopírován do schránky!</div>
+
+  <!-- Footer -->
+  <footer>
+    Hra Lodě (Námořní bitva) • Vytvořeno pro dva hráče i AI • Pravidla: 1×4, 2×3, 3×2, 4×1 pole s odstupem
+  </footer>
+
+  <!-- Knihovna PeerJS pro P2P WebRTC online propojení bez nutnosti vlastního serveru -->
+  <script src="js/peerjs.min.js"></script>
+  <!-- Načtení herního skriptu -->
+  <script src="app.js"></script>
+</body>
+</html>

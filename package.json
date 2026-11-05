@@ -1,0 +1,19 @@
+{
+  "name": "hra-lode",
+  "version": "1.0.0",
+  "description": "Klasická strategická hra Lodě (Námořní bitva) pro 2 hráče i online",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "battleship",
+    "lode",
+    "game",
+    "webrtc",
+    "p2p"
+  ],
+  "author": "",
+  "license": "MIT"
+}
+
