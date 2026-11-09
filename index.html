@@ -92,6 +92,10 @@
               <button id="copyLinkBtn" class="btn btn-primary" title="Zkopírovat přímý odkaz pro kamaráda">🔗 Kopírovat odkaz pro soupeře</button>
             </div>
             <div id="directLinkPreview" class="direct-link-preview">Generuji odkaz...</div>
+            <div id="fileProtocolNotice" style="display: none; background: rgba(234, 179, 8, 0.15); border: 1px solid #eab308; border-radius: 6px; padding: 10px; font-size: 0.82rem; color: #fef08a; margin-top: 10px; text-align: left; line-height: 1.4;">
+              ⚠️ <strong>Hrajete z lokálního disku (file://):</strong><br>
+              Odkaz <em>file:///...</em> nelze poslat na jiné zařízení. Pro hraní online s kamarádem zadejte na druhém zařízení tento <strong>kód místnosti</strong> v záložce „Připojit se“, nebo hru otevřete přes webhosting / Render.
+            </div>
           </div>
 
           <div class="radar-wait-indicator">
@@ -115,6 +119,10 @@
               <input type="text" id="joinRoomCodeInput" class="room-code-input" placeholder="LODE-1234" maxlength="15">
               <button id="joinRoomSubmitBtn" class="btn btn-primary">Připojit se</button>
             </div>
+            <div id="joinStatusIndicator" class="radar-wait-indicator" style="display: none; padding: 10px 0;">
+              <div class="pulse-radar"><span>📡</span></div>
+              <div id="joinStatusText" class="radar-wait-text">Připojuji se k místnosti...</div>
+            </div>
             <div id="joinErrorMsg" style="color: var(--danger); font-size: 0.85rem; display: none;"></div>
           </div>
         </div>
@@ -122,7 +130,7 @@
     </section>
 
     <!-- 1. FÁZE: ROZMÍSTĚNÍ LODÍ (SETUP) -->
-    <section id="setupView" class="game-view active">
+    <section id="setupView" class="game-view">
       <div class="setup-container">
         <!-- Plocha pro rozmístění -->
         <div class="setup-panel">
@@ -337,6 +345,14 @@
 
   <!-- Knihovna PeerJS pro P2P WebRTC online propojení bez nutnosti vlastního serveru -->
   <script src="js/peerjs.min.js"></script>
+  <script>
+    // Pojistka: pokud by lokální soubor selhal, načte se záložní z CDN
+    if (typeof window.Peer === 'undefined') {
+      const s = document.createElement('script');
+      s.src = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
+      document.head.appendChild(s);
+    }
+  </script>
   <!-- Načtení herního skriptu -->
   <script src="app.js"></script>
 </body>

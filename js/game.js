@@ -84,9 +84,12 @@ export class BattleshipGame {
     this.copyCodeBtn = document.getElementById('copyCodeBtn');
     this.copyLinkBtn = document.getElementById('copyLinkBtn');
     this.directLinkPreview = document.getElementById('directLinkPreview');
+    this.fileProtocolNotice = document.getElementById('fileProtocolNotice');
     this.waitOpponentText = document.getElementById('waitOpponentText');
     this.joinRoomCodeInput = document.getElementById('joinRoomCodeInput');
     this.joinRoomSubmitBtn = document.getElementById('joinRoomSubmitBtn');
+    this.joinStatusIndicator = document.getElementById('joinStatusIndicator');
+    this.joinStatusText = document.getElementById('joinStatusText');
     this.joinErrorMsg = document.getElementById('joinErrorMsg');
     this.quickChatBar = document.getElementById('quickChatBar');
     this.toastNotice = document.getElementById('toastNotice');
@@ -180,23 +183,44 @@ export class BattleshipGame {
 
   checkUrlForRoom() {
     try {
+      let roomParam = null;
+
+      // 1. Kontrola query parametrů (?room=...)
       const urlParams = new URLSearchParams(window.location.search);
-      const roomParam = urlParams.get('room');
-      if (roomParam) {
-        this.mode = GAME_MODE.ONLINE;
-        this.modeSelect.value = GAME_MODE.ONLINE;
-        this.difficultySelect.style.display = 'none';
+      roomParam = urlParams.get('room');
 
-        this.switchOnlineTab('join');
-        this.joinRoomCodeInput.value = roomParam.trim().toUpperCase();
-        this.showOnlineLobby();
-
-        setTimeout(() => {
-          this.handleJoinRoomSubmit();
-        }, 400);
-        return;
+      // 2. Kontrola hash fragmentu (#room=... nebo #LODE-...)
+      if (!roomParam && window.location.hash) {
+        const hash = window.location.hash.substring(1);
+        if (hash.startsWith('room=')) {
+          roomParam = hash.substring(5);
+        } else if (hash.length >= 4) {
+          roomParam = hash;
+        }
       }
-    } catch {}
+
+      if (roomParam) {
+        const cleanCode = this.online.cleanRoomCode(roomParam);
+        if (cleanCode) {
+          const formattedCode = `LODE-${cleanCode}`;
+          this.mode = GAME_MODE.ONLINE;
+          this.modeSelect.value = GAME_MODE.ONLINE;
+          this.difficultySelect.style.display = 'none';
+
+          // Zobrazíme lobby s aktivní záložkou 'join'
+          this.showOnlineLobby('join');
+          this.joinRoomCodeInput.value = formattedCode;
+
+          // Automatické zahájení připojení
+          setTimeout(() => {
+            this.handleJoinRoomSubmit();
+          }, 300);
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Chyba při čtení room z URL:', err);
+    }
 
     this.startNewGame();
   }
@@ -207,7 +231,7 @@ export class BattleshipGame {
       this.difficultySelect.style.display = this.mode === GAME_MODE.VS_AI ? 'inline-block' : 'none';
 
       if (this.mode === GAME_MODE.ONLINE) {
-        this.showOnlineLobby();
+        this.showOnlineLobby('create');
       } else {
         this.online.disconnect();
         this.onlineBadge.style.display = 'none';
@@ -237,7 +261,7 @@ export class BattleshipGame {
     this.newGameBtn.addEventListener('click', () => {
       if (confirm('Opravdu chcete restartovat hru a začít novou bitvu?')) {
         if (this.mode === GAME_MODE.ONLINE) {
-          this.showOnlineLobby();
+          this.showOnlineLobby('create');
         } else {
           this.startNewGame();
         }
@@ -294,6 +318,14 @@ export class BattleshipGame {
     });
 
     this.copyLinkBtn.addEventListener('click', () => {
+      if (window.location.protocol === 'file:') {
+        // Na file:// odkaz nefunguje přes internet
+        navigator.clipboard.writeText(this.online.roomCode).then(() => {
+          this.showToast(`📋 Hrajete z disku. Zkopírován kód místnosti (${this.online.roomCode})!`);
+        });
+        return;
+      }
+
       if (this.online.shareUrl) {
         navigator.clipboard.writeText(this.online.shareUrl).then(() => {
           this.showToast('🔗 Odkaz pro kamaráda byl zkopírován do schránky!');
@@ -323,6 +355,12 @@ export class BattleshipGame {
   bindOnlineEvents() {
     this.online.onConnected = (remoteName) => {
       sounds.playRadar();
+      if (this.joinStatusIndicator) this.joinStatusIndicator.style.display = 'none';
+      if (this.joinRoomSubmitBtn) {
+        this.joinRoomSubmitBtn.disabled = false;
+        this.joinRoomSubmitBtn.textContent = 'Připojit se';
+      }
+
       this.showToast(`🎉 Soupeř (${remoteName}) se připojil!`);
       this.onlineBadge.style.display = 'inline-flex';
       this.onlineBadge.classList.remove('disconnected');
@@ -476,13 +514,20 @@ export class BattleshipGame {
     };
 
     this.online.onError = (errMsg) => {
+      if (this.joinStatusIndicator) this.joinStatusIndicator.style.display = 'none';
+      if (this.joinRoomSubmitBtn) {
+        this.joinRoomSubmitBtn.disabled = false;
+        this.joinRoomSubmitBtn.textContent = 'Připojit se';
+      }
+
       this.joinErrorMsg.textContent = errMsg;
       this.joinErrorMsg.style.display = 'block';
       this.showToast(`Chyba: ${errMsg}`);
     };
 
     this.online.onStatusChange = (status) => {
-      this.waitOpponentText.textContent = status;
+      if (this.waitOpponentText) this.waitOpponentText.textContent = status;
+      if (this.joinStatusText) this.joinStatusText.textContent = status;
     };
   }
 
@@ -493,6 +538,9 @@ export class BattleshipGame {
       this.tabContentCreate.classList.add('active');
       this.tabContentJoin.classList.remove('active');
 
+      if (this.joinStatusIndicator) this.joinStatusIndicator.style.display = 'none';
+      if (this.joinErrorMsg) this.joinErrorMsg.style.display = 'none';
+
       const nickname = this.playerNicknameInput.value.trim() || 'Kapitán';
       this.online.createRoom(nickname);
       this.roomCodeVal.textContent = this.online.roomCode || 'Generuji...';
@@ -502,23 +550,37 @@ export class BattleshipGame {
       this.tabJoinRoomBtn.classList.add('active');
       this.tabContentCreate.classList.remove('active');
       this.tabContentJoin.classList.add('active');
-      this.joinErrorMsg.style.display = 'none';
+
+      if (this.joinErrorMsg) this.joinErrorMsg.style.display = 'none';
     }
   }
 
   handleJoinRoomSubmit() {
-    const code = this.joinRoomCodeInput.value.trim().toUpperCase();
-    if (!code) {
-      this.joinErrorMsg.textContent = 'Prosím zadejte kód místnosti.';
+    const rawCode = this.joinRoomCodeInput.value.trim();
+    const cleanCode = this.online.cleanRoomCode(rawCode);
+
+    if (!cleanCode) {
+      this.joinErrorMsg.textContent = 'Prosím zadejte platný kód místnosti (např. 7K4P).';
       this.joinErrorMsg.style.display = 'block';
       return;
     }
+
     this.joinErrorMsg.style.display = 'none';
+    const formattedCode = `LODE-${cleanCode}`;
+    this.joinRoomCodeInput.value = formattedCode;
+
+    if (this.joinStatusIndicator) this.joinStatusIndicator.style.display = 'flex';
+    if (this.joinStatusText) this.joinStatusText.textContent = `Připojuji se k místnosti ${formattedCode}...`;
+    if (this.joinRoomSubmitBtn) {
+      this.joinRoomSubmitBtn.disabled = true;
+      this.joinRoomSubmitBtn.textContent = 'Připojuji...';
+    }
+
     const nickname = this.playerNicknameInput.value.trim() || 'Host';
-    this.online.joinRoom(code, nickname);
+    this.online.joinRoom(formattedCode, nickname);
   }
 
-  showOnlineLobby() {
+  showOnlineLobby(defaultTab = 'create') {
     this.phase = GAME_PHASE.LOBBY;
     this.onlineLobbyView.classList.add('active');
     this.setupView.classList.remove('active');
@@ -527,9 +589,18 @@ export class BattleshipGame {
 
     this.turnBadge.textContent = 'ONLINE LOBBY';
     this.turnBadge.className = 'turn-badge';
-    this.statusMessage.textContent = 'Vytvořte místnost nebo se připojte ke kódu soupeře.';
 
-    this.switchOnlineTab('create');
+    if (this.fileProtocolNotice) {
+      this.fileProtocolNotice.style.display = window.location.protocol === 'file:' ? 'block' : 'none';
+    }
+
+    if (defaultTab === 'join') {
+      this.statusMessage.textContent = 'Zadejte kód místnosti nebo se připojte k soupeři.';
+      this.switchOnlineTab('join');
+    } else {
+      this.statusMessage.textContent = 'Vytvořte místnost a pošlete kód nebo odkaz soupeři.';
+      this.switchOnlineTab('create');
+    }
   }
 
   startOnlineSetupPhase() {

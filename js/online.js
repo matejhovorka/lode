@@ -13,6 +13,7 @@ export class OnlineManager {
     this.localPlayerName = 'Kapitán';
     this.remotePlayerName = 'Soupeř';
     this.isConnected = false;
+    this.connectionTimeout = null;
 
     // Callbacky pro herní události
     this.onConnected = () => {};
@@ -28,7 +29,19 @@ export class OnlineManager {
     this.onStatusChange = () => {};
   }
 
-  // Generování krátkého, dobře čitelného kódu místnosti (např. LODE-7K4P)
+  // Vyčištění a sjednocení kódu místnosti (např. 'LODE-7K4P' -> '7K4P')
+  cleanRoomCode(code) {
+    if (!code) return '';
+    let clean = String(code).trim().toUpperCase();
+    if (clean.startsWith('LODE-')) {
+      clean = clean.substring(5);
+    } else if (clean.startsWith('LODE')) {
+      clean = clean.substring(4);
+    }
+    return clean.replace(/[^A-Z0-9]/g, '');
+  }
+
+  // Generování krátkého, dobře čitelného 4-znakového kódu (např. 7K4P)
   generateRoomCode() {
     const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
     let code = '';
@@ -39,7 +52,8 @@ export class OnlineManager {
   }
 
   getPeerId(roomCode) {
-    return `battleship-cz-${roomCode.trim().toUpperCase()}`;
+    const clean = this.cleanRoomCode(roomCode);
+    return `battleship-cz-v2-${clean}`;
   }
 
   getShareUrl(roomCode) {
@@ -53,6 +67,21 @@ export class OnlineManager {
     }
   }
 
+  getPeerConfig() {
+    return {
+      debug: 1,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' }
+        ]
+      }
+    };
+  }
+
   /**
    * Založení nové online místnosti (Host)
    */
@@ -64,29 +93,29 @@ export class OnlineManager {
     this.shareUrl = this.getShareUrl(this.roomCode);
 
     if (typeof Peer === 'undefined') {
-      this.onError('Knihovna PeerJS nebyla načtena. Zkontrolujte připojení k internetu.');
+      this.onError('Knihovna PeerJS se nenačetla. Zkontrolujte připojení k internetu.');
       return false;
     }
 
     const peerId = this.getPeerId(this.roomCode);
+    this.onStatusChange(`Zakládám místnost ${this.roomCode}...`);
 
     try {
-      this.peer = new Peer(peerId, {
-        debug: 1
-      });
+      this.peer = new Peer(peerId, this.getPeerConfig());
 
       this.peer.on('open', () => {
-        this.onStatusChange('Místnost vytvořena. Čekám na soupeře...');
+        this.onStatusChange(`Místnost ${this.roomCode} otevřena! Čekám na připojení soupeře...`);
       });
 
       this.peer.on('connection', (conn) => {
+        this.onStatusChange(`Soupeř se připojuje, probíhá ověření spojení...`);
         this.setupConnection(conn);
       });
 
       this.peer.on('error', (err) => {
-        console.error('Peer error:', err);
+        console.error('Peer host error:', err);
         if (err.type === 'unavailable-id') {
-          // Kód byl náhodou obsazen, zkusíme nový kód
+          // Kód byl náhodou obsazen, vygenerujeme nový a zkusíme znovu
           setTimeout(() => this.createRoom(playerName), 300);
         } else {
           this.onError(`Chyba online spojení: ${err.type || err.message}`);
@@ -107,21 +136,36 @@ export class OnlineManager {
     this.disconnect();
     this.isHost = false;
     this.localPlayerName = playerName || 'Host';
-    this.roomCode = roomCode.trim().toUpperCase();
 
-    if (typeof Peer === 'undefined') {
-      this.onError('Knihovna PeerJS nebyla načtena. Zkontrolujte připojení k internetu.');
+    const clean = this.cleanRoomCode(roomCode);
+    if (!clean) {
+      this.onError('Neplatný kód místnosti.');
       return false;
     }
 
+    this.roomCode = `LODE-${clean}`;
+
+    if (typeof Peer === 'undefined') {
+      this.onError('Knihovna PeerJS se nenačetla. Zkontrolujte připojení k internetu.');
+      return false;
+    }
+
+    this.onStatusChange(`Připojování k místnosti ${this.roomCode}...`);
+
+    // Nastavíme timeout pro případ, že se spojení nezdaří
+    this.clearConnectionTimeout();
+    this.connectionTimeout = setTimeout(() => {
+      if (!this.isConnected) {
+        this.onError(`Místnost ${this.roomCode} neodpovídá. Ujistěte se, že hostitel má hru stále otevřenou v prohlížeči.`);
+      }
+    }, 14000);
+
     try {
-      this.peer = new Peer({
-        debug: 1
-      });
+      this.peer = new Peer(this.getPeerConfig());
 
       this.peer.on('open', () => {
         const targetPeerId = this.getPeerId(this.roomCode);
-        this.onStatusChange(`Připojování k místnosti ${this.roomCode}...`);
+        this.onStatusChange(`Vyhledávám hostitele místnosti ${this.roomCode}...`);
 
         const conn = this.peer.connect(targetPeerId, {
           reliable: true
@@ -131,9 +175,10 @@ export class OnlineManager {
       });
 
       this.peer.on('error', (err) => {
-        console.error('Peer error:', err);
+        console.error('Peer join error:', err);
+        this.clearConnectionTimeout();
         if (err.type === 'peer-unavailable') {
-          this.onError(`Místnost s kódem ${this.roomCode} nebyla nalezena. Zkontrolujte správnost kódu.`);
+          this.onError(`Místnost ${this.roomCode} nebyla nalezena. Zkontrolujte správnost kódu a zda má hostitel hru otevřenou.`);
         } else {
           this.onError(`Chyba připojení: ${err.type || err.message}`);
         }
@@ -141,35 +186,58 @@ export class OnlineManager {
 
       return true;
     } catch (err) {
+      this.clearConnectionTimeout();
       this.onError(`Nelze se připojit k místnosti: ${err.message}`);
       return false;
+    }
+  }
+
+  clearConnectionTimeout() {
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+      this.connectionTimeout = null;
     }
   }
 
   setupConnection(conn) {
     this.conn = conn;
 
-    conn.on('open', () => {
+    const onOpened = () => {
+      this.clearConnectionTimeout();
       this.isConnected = true;
-      // Odeslat uvítací handshake se jménem
-      conn.send({
-        type: 'HELLO',
-        name: this.localPlayerName
-      });
-    });
+      this.onStatusChange('Spojení otevřeno! Vyměňuji herní data...');
+
+      // Odeslat handshake se jménem
+      try {
+        conn.send({
+          type: 'HELLO',
+          name: this.localPlayerName
+        });
+      } catch (err) {
+        console.error('Chyba odeslání HELLO:', err);
+      }
+    };
+
+    if (conn.open) {
+      onOpened();
+    } else {
+      conn.on('open', onOpened);
+    }
 
     conn.on('data', (data) => {
       this.handleIncomingMessage(data);
     });
 
     conn.on('close', () => {
+      this.clearConnectionTimeout();
       this.isConnected = false;
       this.onDisconnected();
     });
 
     conn.on('error', (err) => {
-      console.error('Conn error:', err);
-      this.onError('Chyba datového kanálu se soupeřem.');
+      console.error('DataConnection error:', err);
+      this.clearConnectionTimeout();
+      this.onError('Chyba spojení se soupeřem.');
     });
   }
 
@@ -178,19 +246,23 @@ export class OnlineManager {
 
     switch (data.type) {
       case 'HELLO':
+        this.clearConnectionTimeout();
+        this.isConnected = true;
         this.remotePlayerName = data.name || (this.isHost ? 'Host' : 'Hostitel');
+
+        // Odpověď HELLO_ACK se jménem, aby měly obě strany jistotu
+        this.send({
+          type: 'HELLO_ACK',
+          name: this.localPlayerName
+        });
+
         this.onConnected(this.remotePlayerName);
-        // Pokud jsem hostitel a přijal jsem HELLO, pošlu zpět své jméno
-        if (this.isHost) {
-          this.send({
-            type: 'HELLO_ACK',
-            name: this.localPlayerName
-          });
-        }
         break;
 
       case 'HELLO_ACK':
-        this.remotePlayerName = data.name || 'Hostitel';
+        this.clearConnectionTimeout();
+        this.isConnected = true;
+        this.remotePlayerName = data.name || (this.isHost ? 'Host' : 'Hostitel');
         this.onConnected(this.remotePlayerName);
         break;
 
@@ -226,8 +298,12 @@ export class OnlineManager {
 
   send(data) {
     if (this.conn && this.conn.open) {
-      this.conn.send(data);
-      return true;
+      try {
+        this.conn.send(data);
+        return true;
+      } catch (err) {
+        console.error('Chyba odeslání dat:', err);
+      }
     }
     return false;
   }
@@ -264,6 +340,7 @@ export class OnlineManager {
   }
 
   disconnect() {
+    this.clearConnectionTimeout();
     if (this.conn) {
       try { this.conn.close(); } catch {}
       this.conn = null;
@@ -278,4 +355,3 @@ export class OnlineManager {
     this.shareUrl = null;
   }
 }
-

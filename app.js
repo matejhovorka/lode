@@ -15,8 +15,6 @@
   const BOARD_SIZE = 10;
   const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
 
-  // Flotila přesně podle zadaných pravidel:
-  // 1x 4 pole, 2x 3 pole, 3x 2 pole, 4x 1 pole
   const FLEET_CONFIG = [
     { id: 'battleship', name: 'Bitevní loď', size: 4, count: 1, icon: '🚢' },
     { id: 'cruiser', name: 'Křižník', size: 3, count: 2, icon: '🛥️' },
@@ -771,6 +769,7 @@
       this.localPlayerName = 'Kapitán';
       this.remotePlayerName = 'Soupeř';
       this.isConnected = false;
+      this.connectionTimeout = null;
 
       this.onConnected = () => {};
       this.onOpponentReady = () => {};
@@ -785,6 +784,17 @@
       this.onStatusChange = () => {};
     }
 
+    cleanRoomCode(code) {
+      if (!code) return '';
+      let clean = String(code).trim().toUpperCase();
+      if (clean.startsWith('LODE-')) {
+        clean = clean.substring(5);
+      } else if (clean.startsWith('LODE')) {
+        clean = clean.substring(4);
+      }
+      return clean.replace(/[^A-Z0-9]/g, '');
+    }
+
     generateRoomCode() {
       const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
       let code = '';
@@ -795,7 +805,8 @@
     }
 
     getPeerId(roomCode) {
-      return `battleship-cz-${roomCode.trim().toUpperCase()}`;
+      const clean = this.cleanRoomCode(roomCode);
+      return `battleship-cz-v2-${clean}`;
     }
 
     getShareUrl(roomCode) {
@@ -806,6 +817,21 @@
       } catch {
         return `${window.location.href}?room=${roomCode}`;
       }
+    }
+
+    getPeerConfig() {
+      return {
+        debug: 1,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' }
+          ]
+        }
+      };
     }
 
     createRoom(playerName = 'Kapitán') {
@@ -821,23 +847,26 @@
       }
 
       const peerId = this.getPeerId(this.roomCode);
+      this.onStatusChange(`Zakládám místnost ${this.roomCode}...`);
 
       try {
-        this.peer = new Peer(peerId, { debug: 1 });
+        this.peer = new Peer(peerId, this.getPeerConfig());
 
         this.peer.on('open', () => {
-          this.onStatusChange('Místnost připravena. Čekám na soupeře...');
+          this.onStatusChange(`Místnost ${this.roomCode} otevřena! Čekám na připojení soupeře...`);
         });
 
         this.peer.on('connection', (conn) => {
+          this.onStatusChange(`Soupeř se připojuje, probíhá ověření spojení...`);
           this.setupConnection(conn);
         });
 
         this.peer.on('error', (err) => {
+          console.error('Peer host error:', err);
           if (err.type === 'unavailable-id') {
             setTimeout(() => this.createRoom(playerName), 300);
           } else {
-            this.onError(`Chyba spojení: ${err.type || err.message}`);
+            this.onError(`Chyba online spojení: ${err.type || err.message}`);
           }
         });
 
@@ -852,27 +881,45 @@
       this.disconnect();
       this.isHost = false;
       this.localPlayerName = playerName || 'Host';
-      this.roomCode = roomCode.trim().toUpperCase();
+
+      const clean = this.cleanRoomCode(roomCode);
+      if (!clean) {
+        this.onError('Neplatný kód místnosti.');
+        return false;
+      }
+
+      this.roomCode = `LODE-${clean}`;
 
       if (typeof Peer === 'undefined') {
         this.onError('Knihovna PeerJS se nenačetla. Ověřte připojení k internetu.');
         return false;
       }
 
+      this.onStatusChange(`Připojování k místnosti ${this.roomCode}...`);
+
+      this.clearConnectionTimeout();
+      this.connectionTimeout = setTimeout(() => {
+        if (!this.isConnected) {
+          this.onError(`Místnost ${this.roomCode} neodpovídá. Ujistěte se, že hostitel má hru stále otevřenou v prohlížeči.`);
+        }
+      }, 14000);
+
       try {
-        this.peer = new Peer({ debug: 1 });
+        this.peer = new Peer(this.getPeerConfig());
 
         this.peer.on('open', () => {
           const targetPeerId = this.getPeerId(this.roomCode);
-          this.onStatusChange(`Připojování k místnosti ${this.roomCode}...`);
+          this.onStatusChange(`Vyhledávám hostitele místnosti ${this.roomCode}...`);
 
           const conn = this.peer.connect(targetPeerId, { reliable: true });
           this.setupConnection(conn);
         });
 
         this.peer.on('error', (err) => {
+          console.error('Peer join error:', err);
+          this.clearConnectionTimeout();
           if (err.type === 'peer-unavailable') {
-            this.onError(`Místnost s kódem ${this.roomCode} nebyla nalezena.`);
+            this.onError(`Místnost ${this.roomCode} nebyla nalezena. Zkontrolujte kód a zda má hostitel hru otevřenou.`);
           } else {
             this.onError(`Chyba připojení: ${err.type || err.message}`);
           }
@@ -880,33 +927,57 @@
 
         return true;
       } catch (err) {
+        this.clearConnectionTimeout();
         this.onError(`Nelze se připojit k místnosti: ${err.message}`);
         return false;
+      }
+    }
+
+    clearConnectionTimeout() {
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
       }
     }
 
     setupConnection(conn) {
       this.conn = conn;
 
-      conn.on('open', () => {
+      const onOpened = () => {
+        this.clearConnectionTimeout();
         this.isConnected = true;
-        conn.send({
-          type: 'HELLO',
-          name: this.localPlayerName
-        });
-      });
+        this.onStatusChange('Spojení otevřeno! Vyměňuji herní data...');
+
+        try {
+          conn.send({
+            type: 'HELLO',
+            name: this.localPlayerName
+          });
+        } catch (err) {
+          console.error('Chyba odeslání HELLO:', err);
+        }
+      };
+
+      if (conn.open) {
+        onOpened();
+      } else {
+        conn.on('open', onOpened);
+      }
 
       conn.on('data', (data) => {
         this.handleIncomingMessage(data);
       });
 
       conn.on('close', () => {
+        this.clearConnectionTimeout();
         this.isConnected = false;
         this.onDisconnected();
       });
 
-      conn.on('error', () => {
-        this.onError('Chyba datového kanálu se soupeřem.');
+      conn.on('error', (err) => {
+        console.error('DataConnection error:', err);
+        this.clearConnectionTimeout();
+        this.onError('Chyba spojení se soupeřem.');
       });
     }
 
@@ -915,15 +986,22 @@
 
       switch (data.type) {
         case 'HELLO':
+          this.clearConnectionTimeout();
+          this.isConnected = true;
           this.remotePlayerName = data.name || (this.isHost ? 'Host' : 'Hostitel');
+
+          this.send({
+            type: 'HELLO_ACK',
+            name: this.localPlayerName
+          });
+
           this.onConnected(this.remotePlayerName);
-          if (this.isHost) {
-            this.send({ type: 'HELLO_ACK', name: this.localPlayerName });
-          }
           break;
 
         case 'HELLO_ACK':
-          this.remotePlayerName = data.name || 'Hostitel';
+          this.clearConnectionTimeout();
+          this.isConnected = true;
+          this.remotePlayerName = data.name || (this.isHost ? 'Host' : 'Hostitel');
           this.onConnected(this.remotePlayerName);
           break;
 
@@ -959,8 +1037,12 @@
 
     send(data) {
       if (this.conn && this.conn.open) {
-        this.conn.send(data);
-        return true;
+        try {
+          this.conn.send(data);
+          return true;
+        } catch (err) {
+          console.error('Chyba odeslání dat:', err);
+        }
       }
       return false;
     }
@@ -994,6 +1076,7 @@
     }
 
     disconnect() {
+      this.clearConnectionTimeout();
       if (this.conn) {
         try { this.conn.close(); } catch {}
         this.conn = null;
@@ -1080,9 +1163,12 @@
       this.copyCodeBtn = document.getElementById('copyCodeBtn');
       this.copyLinkBtn = document.getElementById('copyLinkBtn');
       this.directLinkPreview = document.getElementById('directLinkPreview');
+      this.fileProtocolNotice = document.getElementById('fileProtocolNotice');
       this.waitOpponentText = document.getElementById('waitOpponentText');
       this.joinRoomCodeInput = document.getElementById('joinRoomCodeInput');
       this.joinRoomSubmitBtn = document.getElementById('joinRoomSubmitBtn');
+      this.joinStatusIndicator = document.getElementById('joinStatusIndicator');
+      this.joinStatusText = document.getElementById('joinStatusText');
       this.joinErrorMsg = document.getElementById('joinErrorMsg');
       this.quickChatBar = document.getElementById('quickChatBar');
       this.toastNotice = document.getElementById('toastNotice');
@@ -1171,28 +1257,49 @@
       this.toastNotice.classList.add('show');
       setTimeout(() => {
         this.toastNotice.classList.remove('show');
-      }, 2500);
+      }, 3000);
     }
 
     checkUrlForRoom() {
       try {
+        let roomParam = null;
+
+        // 1. Kontrola query parametrů (?room=...)
         const urlParams = new URLSearchParams(window.location.search);
-        const roomParam = urlParams.get('room');
-        if (roomParam) {
-          this.mode = GAME_MODE.ONLINE;
-          this.modeSelect.value = GAME_MODE.ONLINE;
-          this.difficultySelect.style.display = 'none';
+        roomParam = urlParams.get('room');
 
-          this.switchOnlineTab('join');
-          this.joinRoomCodeInput.value = roomParam.trim().toUpperCase();
-          this.showOnlineLobby();
-
-          setTimeout(() => {
-            this.handleJoinRoomSubmit();
-          }, 400);
-          return;
+        // 2. Kontrola hash fragmentu (#room=... nebo #LODE-...)
+        if (!roomParam && window.location.hash) {
+          const hash = window.location.hash.substring(1);
+          if (hash.startsWith('room=')) {
+            roomParam = hash.substring(5);
+          } else if (hash.length >= 4) {
+            roomParam = hash;
+          }
         }
-      } catch {}
+
+        if (roomParam) {
+          const cleanCode = this.online.cleanRoomCode(roomParam);
+          if (cleanCode) {
+            const formattedCode = `LODE-${cleanCode}`;
+            this.mode = GAME_MODE.ONLINE;
+            this.modeSelect.value = GAME_MODE.ONLINE;
+            this.difficultySelect.style.display = 'none';
+
+            // Zobrazíme lobby s aktivní záložkou 'join'
+            this.showOnlineLobby('join');
+            this.joinRoomCodeInput.value = formattedCode;
+
+            // Automatické zahájení připojení
+            setTimeout(() => {
+              this.handleJoinRoomSubmit();
+            }, 300);
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('Chyba při čtení room z URL:', err);
+      }
 
       this.startNewGame();
     }
@@ -1203,7 +1310,7 @@
         this.difficultySelect.style.display = this.mode === GAME_MODE.VS_AI ? 'inline-block' : 'none';
 
         if (this.mode === GAME_MODE.ONLINE) {
-          this.showOnlineLobby();
+          this.showOnlineLobby('create');
         } else {
           this.online.disconnect();
           this.onlineBadge.style.display = 'none';
@@ -1233,7 +1340,7 @@
       this.newGameBtn.addEventListener('click', () => {
         if (confirm('Opravdu chcete restartovat hru a začít novou bitvu?')) {
           if (this.mode === GAME_MODE.ONLINE) {
-            this.showOnlineLobby();
+            this.showOnlineLobby('create');
           } else {
             this.startNewGame();
           }
@@ -1284,12 +1391,20 @@
       this.copyCodeBtn.addEventListener('click', () => {
         if (this.online.roomCode) {
           navigator.clipboard.writeText(this.online.roomCode).then(() => {
-            this.showToast('📋 Kód místnosti byl zkopírován!');
+            this.showToast(`📋 Kód místnosti ${this.online.roomCode} byl zkopírován!`);
           });
         }
       });
 
       this.copyLinkBtn.addEventListener('click', () => {
+        if (window.location.protocol === 'file:') {
+          // Na file:// odkaz nefunguje přes internet
+          navigator.clipboard.writeText(this.online.roomCode).then(() => {
+            this.showToast(`📋 Hrajete z disku. Zkopírován kód místnosti (${this.online.roomCode})!`);
+          });
+          return;
+        }
+
         if (this.online.shareUrl) {
           navigator.clipboard.writeText(this.online.shareUrl).then(() => {
             this.showToast('🔗 Odkaz pro kamaráda byl zkopírován do schránky!');
@@ -1302,7 +1417,7 @@
         if (e.key === 'Enter') this.handleJoinRoomSubmit();
       });
 
-      // Quick Chat reaction buttons
+      // Quick Chat reakce
       const chatBtns = document.querySelectorAll('.chat-reaction-btn');
       chatBtns.forEach(btn => {
         btn.addEventListener('click', () => {
@@ -1319,6 +1434,12 @@
     bindOnlineEvents() {
       this.online.onConnected = (remoteName) => {
         sounds.playRadar();
+        if (this.joinStatusIndicator) this.joinStatusIndicator.style.display = 'none';
+        if (this.joinRoomSubmitBtn) {
+          this.joinRoomSubmitBtn.disabled = false;
+          this.joinRoomSubmitBtn.textContent = 'Připojit se';
+        }
+
         this.showToast(`🎉 Soupeř (${remoteName}) se připojil!`);
         this.onlineBadge.style.display = 'inline-flex';
         this.onlineBadge.classList.remove('disconnected');
@@ -1472,13 +1593,20 @@
       };
 
       this.online.onError = (errMsg) => {
+        if (this.joinStatusIndicator) this.joinStatusIndicator.style.display = 'none';
+        if (this.joinRoomSubmitBtn) {
+          this.joinRoomSubmitBtn.disabled = false;
+          this.joinRoomSubmitBtn.textContent = 'Připojit se';
+        }
+
         this.joinErrorMsg.textContent = errMsg;
         this.joinErrorMsg.style.display = 'block';
         this.showToast(`Chyba: ${errMsg}`);
       };
 
       this.online.onStatusChange = (status) => {
-        this.waitOpponentText.textContent = status;
+        if (this.waitOpponentText) this.waitOpponentText.textContent = status;
+        if (this.joinStatusText) this.joinStatusText.textContent = status;
       };
     }
 
@@ -1489,6 +1617,9 @@
         this.tabContentCreate.classList.add('active');
         this.tabContentJoin.classList.remove('active');
 
+        if (this.joinStatusIndicator) this.joinStatusIndicator.style.display = 'none';
+        if (this.joinErrorMsg) this.joinErrorMsg.style.display = 'none';
+
         const nickname = this.playerNicknameInput.value.trim() || 'Kapitán';
         this.online.createRoom(nickname);
         this.roomCodeVal.textContent = this.online.roomCode || 'Generuji...';
@@ -1498,23 +1629,37 @@
         this.tabJoinRoomBtn.classList.add('active');
         this.tabContentCreate.classList.remove('active');
         this.tabContentJoin.classList.add('active');
-        this.joinErrorMsg.style.display = 'none';
+
+        if (this.joinErrorMsg) this.joinErrorMsg.style.display = 'none';
       }
     }
 
     handleJoinRoomSubmit() {
-      const code = this.joinRoomCodeInput.value.trim().toUpperCase();
-      if (!code) {
-        this.joinErrorMsg.textContent = 'Prosím zadejte kód místnosti.';
+      const rawCode = this.joinRoomCodeInput.value.trim();
+      const cleanCode = this.online.cleanRoomCode(rawCode);
+
+      if (!cleanCode) {
+        this.joinErrorMsg.textContent = 'Prosím zadejte platný kód místnosti (např. 7K4P).';
         this.joinErrorMsg.style.display = 'block';
         return;
       }
+
       this.joinErrorMsg.style.display = 'none';
+      const formattedCode = `LODE-${cleanCode}`;
+      this.joinRoomCodeInput.value = formattedCode;
+
+      if (this.joinStatusIndicator) this.joinStatusIndicator.style.display = 'flex';
+      if (this.joinStatusText) this.joinStatusText.textContent = `Připojuji se k místnosti ${formattedCode}...`;
+      if (this.joinRoomSubmitBtn) {
+        this.joinRoomSubmitBtn.disabled = true;
+        this.joinRoomSubmitBtn.textContent = 'Připojuji...';
+      }
+
       const nickname = this.playerNicknameInput.value.trim() || 'Host';
-      this.online.joinRoom(code, nickname);
+      this.online.joinRoom(formattedCode, nickname);
     }
 
-    showOnlineLobby() {
+    showOnlineLobby(defaultTab = 'create') {
       this.phase = GAME_PHASE.LOBBY;
       this.onlineLobbyView.classList.add('active');
       this.setupView.classList.remove('active');
@@ -1523,9 +1668,18 @@
 
       this.turnBadge.textContent = 'ONLINE LOBBY';
       this.turnBadge.className = 'turn-badge';
-      this.statusMessage.textContent = 'Vytvořte místnost nebo se připojte ke kódu soupeře.';
 
-      this.switchOnlineTab('create');
+      if (this.fileProtocolNotice) {
+        this.fileProtocolNotice.style.display = window.location.protocol === 'file:' ? 'block' : 'none';
+      }
+
+      if (defaultTab === 'join') {
+        this.statusMessage.textContent = 'Zadejte kód místnosti nebo se připojte k soupeři.';
+        this.switchOnlineTab('join');
+      } else {
+        this.statusMessage.textContent = 'Vytvořte místnost a pošlete kód nebo odkaz soupeři.';
+        this.switchOnlineTab('create');
+      }
     }
 
     startOnlineSetupPhase() {
