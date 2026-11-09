@@ -828,12 +828,41 @@
         debug: 1,
         config: {
           iceServers: [
+            // Google STUN servery
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
             { urls: 'stun:stun2.l.google.com:19302' },
-            { urls: 'stun:stun3.l.google.com:19302' },
-            { urls: 'stun:stun4.l.google.com:19302' }
-          ]
+            // Cloudflare STUN
+            { urls: 'stun:stun.cloudflare.com:3478' },
+            // PeerJS oficiální TURN servery
+            {
+              urls: [
+                'turn:eu-0.turn.peerjs.com:3478',
+                'turn:us-0.turn.peerjs.com:3478'
+              ],
+              username: 'peerjs',
+              credential: 'peerjsp'
+            },
+            // OpenRelay globální TURN servery (Metered) pro průchod přes striktní firewally a symetrické NAT
+            { urls: 'stun:openrelay.metered.ca:80' },
+            {
+              urls: 'turn:openrelay.metered.ca:80',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            },
+            {
+              urls: 'turn:openrelay.metered.ca:443',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            },
+            {
+              urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            }
+          ],
+          sdpSemantics: 'unified-plan',
+          iceCandidatePoolSize: 10
         }
       };
     }
@@ -915,7 +944,9 @@
           const targetPeerId = this.getPeerId(this.roomCode);
           this.onStatusChange(`Vyhledávám hostitele místnosti ${this.roomCode}...`);
 
-          const conn = this.peer.connect(targetPeerId, { reliable: true });
+          const conn = this.peer.connect(targetPeerId, {
+            serialization: 'json'
+          });
           this.setupConnection(conn);
         });
 
@@ -947,25 +978,44 @@
     setupConnection(conn) {
       this.conn = conn;
 
+      const sendHello = () => {
+        try {
+          if (this.conn && !this.handshakeComplete) {
+            this.conn.send({
+              type: 'HELLO',
+              name: this.localPlayerName
+            });
+          }
+        } catch (err) {
+          console.warn('Odeslání HELLO varování:', err);
+        }
+      };
+
       const onOpened = () => {
+        if (this.isConnected) return;
         this.clearConnectionTimeout();
         this.isConnected = true;
         this.onStatusChange('Spojení otevřeno! Vyměňuji herní data...');
 
-        try {
-          conn.send({
-            type: 'HELLO',
-            name: this.localPlayerName
-          });
-        } catch (err) {
-          console.error('Chyba odeslání HELLO:', err);
-        }
+        sendHello();
+        setTimeout(sendHello, 800);
+        setTimeout(sendHello, 2000);
       };
 
       if (conn.open) {
         onOpened();
       } else {
         conn.on('open', onOpened);
+
+        const checkOpenTimer = setInterval(() => {
+          if (conn.open) {
+            clearInterval(checkOpenTimer);
+            onOpened();
+          }
+        }, 200);
+
+        conn.on('close', () => clearInterval(checkOpenTimer));
+        conn.on('error', () => clearInterval(checkOpenTimer));
       }
 
       conn.on('data', (data) => {
@@ -983,6 +1033,23 @@
         this.clearConnectionTimeout();
         this.onError('Chyba spojení se soupeřem.');
       });
+
+      if (conn.peerConnection) {
+        conn.peerConnection.addEventListener('iceconnectionstatechange', () => {
+          const state = conn.peerConnection.iceConnectionState;
+          console.log('[WebRTC] ICE stav:', state);
+          if (state === 'connected' || state === 'completed') {
+            if (!this.isConnected && conn.open) {
+              onOpened();
+            }
+          } else if (state === 'failed') {
+            console.warn('[WebRTC] ICE selhalo, pokus o restart ICE...');
+            try {
+              conn.peerConnection.restartIce();
+            } catch {}
+          }
+        });
+      }
     }
 
     handleIncomingMessage(data) {
