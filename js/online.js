@@ -13,6 +13,7 @@ export class OnlineManager {
     this.localPlayerName = 'Kapitán';
     this.remotePlayerName = 'Soupeř';
     this.isConnected = false;
+    this.handshakeComplete = false;
     this.connectionTimeout = null;
 
     // Callbacky pro herní události
@@ -60,10 +61,13 @@ export class OnlineManager {
     if (typeof window === 'undefined') return '';
     try {
       const url = new URL(window.location.href);
+      url.search = '';
+      url.hash = '';
       url.searchParams.set('room', roomCode);
       return url.toString();
     } catch {
-      return `${window.location.href}?room=${roomCode}`;
+      const base = window.location.href.split('?')[0].split('#')[0];
+      return `${base}?room=${roomCode}`;
     }
   }
 
@@ -256,14 +260,20 @@ export class OnlineManager {
           name: this.localPlayerName
         });
 
-        this.onConnected(this.remotePlayerName);
+        if (!this.handshakeComplete) {
+          this.handshakeComplete = true;
+          this.onConnected(this.remotePlayerName);
+        }
         break;
 
       case 'HELLO_ACK':
         this.clearConnectionTimeout();
         this.isConnected = true;
         this.remotePlayerName = data.name || (this.isHost ? 'Host' : 'Hostitel');
-        this.onConnected(this.remotePlayerName);
+        if (!this.handshakeComplete) {
+          this.handshakeComplete = true;
+          this.onConnected(this.remotePlayerName);
+        }
         break;
 
       case 'READY':
@@ -350,6 +360,7 @@ export class OnlineManager {
       this.peer = null;
     }
     this.isConnected = false;
+    this.handshakeComplete = false;
     this.isHost = false;
     this.roomCode = null;
     this.shareUrl = null;

@@ -15,12 +15,12 @@ AddType application/json .json
   AddOutputFilterByType DEFLATE text/html text/plain text/css application/javascript application/json image/svg+xml
 </IfModule>
 
-# Caching pro statické assety
+# Caching pro statické assety - HTML, JS a CSS se nepřechovávají ve staré mezipaměti
 <IfModule mod_expires.c>
   ExpiresActive On
-  ExpiresByType text/css "access plus 1 week"
-  ExpiresByType application/javascript "access plus 1 week"
-  ExpiresByType image/svg+xml "access plus 1 month"
   ExpiresByType text/html "access plus 0 seconds"
+  ExpiresByType text/css "access plus 0 seconds"
+  ExpiresByType application/javascript "access plus 0 seconds"
+  ExpiresByType image/svg+xml "access plus 1 month"
 </IfModule>
 
